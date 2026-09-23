@@ -1,0 +1,72 @@
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400;500;600&family=Inter:wght@300;400;500&family=JetBrains+Mono:wght@300;400&family=Noto+Serif+Tamil:wght@300;400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-ink-950 text-parchment-200/80 font-sans antialiased;
+    background-color: #070912;
+  }
+  ::selection {
+    @apply bg-bronze-400/30 text-parchment-50;
+  }
+}
+
+@layer components {
+  .hairline {
+    @apply border-white/[0.06];
+  }
+  .rule {
+    @apply h-px bg-gradient-to-r from-transparent via-bronze-400/20 to-transparent;
+  }
+  .rule-vertical {
+    @apply w-px bg-gradient-to-b from-transparent via-bronze-400/20 to-transparent;
+  }
+  .eyebrow {
+    @apply text-[10px] tracking-[0.3em] uppercase font-mono text-bronze-400/60;
+  }
+  .editorial-link {
+    @apply text-parchment-300/70 hover:text-bronze-300 transition-colors duration-700;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+  .text-ivory {
+    color: #ebe4d4;
+  }
+  .grain {
+    position: relative;
+  }
+  .grain::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.03;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  .starfield {
+    background-image:
+      radial-gradient(1px 1px at 20% 30%, rgba(235,228,212,0.15), transparent),
+      radial-gradient(1px 1px at 60% 70%, rgba(235,228,212,0.1), transparent),
+      radial-gradient(1px 1px at 80% 20%, rgba(235,228,212,0.08), transparent),
+      radial-gradient(1px 1px at 40% 80%, rgba(235,228,212,0.06), transparent),
+      radial-gradient(1px 1px at 90% 50%, rgba(235,228,212,0.05), transparent),
+      radial-gradient(1px 1px at 10% 60%, rgba(235,228,212,0.07), transparent);
+  }
+  .manuscript-overlay {
+    background:
+      linear-gradient(180deg, rgba(7,9,18,0.2) 0%, rgba(7,9,18,0.6) 50%, rgba(7,9,18,0.95) 100%);
+  }
+  .vignette {
+    background: radial-gradient(ellipse at center, transparent 30%, rgba(7,9,18,0.7) 100%);
+  }
+}
