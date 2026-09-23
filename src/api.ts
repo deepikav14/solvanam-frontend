@@ -7,7 +7,9 @@ export class BackendUnavailableError extends Error {
   }
 }
 
-// -- Raw response shapes (kept loose — the backend may extend these) --
+// ============================================================
+// RAW RESPONSE SHAPES
+// ============================================================
 
 export interface WordResponse {
   word?: string;
@@ -17,30 +19,56 @@ export interface WordResponse {
 export interface FamilyResponse {
   word?: string;
   family?: unknown;
+  forms?: unknown;
+  lexical_family?: unknown;
   [key: string]: unknown;
 }
 
 export interface ConstellationResponse {
   word?: string;
   constellation?: unknown;
+  clusters?: unknown;
+  assignments?: unknown;
+  era_by_cluster_counts?: unknown;
   [key: string]: unknown;
 }
 
-// -- Fetch helper --
+export interface HistoricalModernResponse {
+  status?: string;
+  query?: string;
+  historical_context_count?: number;
+  historical_contexts?: unknown;
+  modern_context_matches?: unknown;
+  modern_candidates?: unknown;
+  interpretation_note?: string;
+  [key: string]: unknown;
+}
 
-async function fetchJson<T>(url: string, signal?: AbortSignal): Promise<T> {
+// ============================================================
+// FETCH HELPER
+// ============================================================
+
+async function fetchJson<T>(
+  url: string,
+  signal?: AbortSignal,
+): Promise<T> {
   let res: Response;
+
   try {
     res = await fetch(url, {
       signal,
-      headers: { Accept: 'application/json' },
+      headers: {
+        Accept: 'application/json',
+      },
     });
   } catch {
     throw new BackendUnavailableError();
   }
+
   if (!res.ok) {
     throw new BackendUnavailableError();
   }
+
   try {
     return (await res.json()) as T;
   } catch {
@@ -48,78 +76,267 @@ async function fetchJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   }
 }
 
-// -- API endpoints --
+// ============================================================
+// API ENDPOINTS
+// ============================================================
 
-export function getHealth(signal?: AbortSignal): Promise<WordResponse> {
-  return fetchJson<WordResponse>(`${API_BASE_URL}/health`, signal);
+export function getHealth(
+  signal?: AbortSignal,
+): Promise<WordResponse> {
+  return fetchJson<WordResponse>(
+    `${API_BASE_URL}/health`,
+    signal,
+  );
 }
 
-export function getWord(word: string, signal?: AbortSignal): Promise<WordResponse> {
+export function getWord(
+  word: string,
+  signal?: AbortSignal,
+): Promise<WordResponse> {
   return fetchJson<WordResponse>(
     `${API_BASE_URL}/word/${encodeURIComponent(word)}`,
     signal,
   );
 }
 
-export function getWordFamily(word: string, signal?: AbortSignal): Promise<FamilyResponse> {
+export function getWordFamily(
+  word: string,
+  signal?: AbortSignal,
+): Promise<FamilyResponse> {
   return fetchJson<FamilyResponse>(
     `${API_BASE_URL}/word/${encodeURIComponent(word)}/family`,
     signal,
   );
 }
 
-export function getWordConstellation(word: string, signal?: AbortSignal): Promise<ConstellationResponse> {
+export function getWordConstellation(
+  word: string,
+  signal?: AbortSignal,
+): Promise<ConstellationResponse> {
   return fetchJson<ConstellationResponse>(
     `${API_BASE_URL}/word/${encodeURIComponent(word)}/constellation`,
     signal,
   );
 }
 
-// -- Response parsers (defensive — extract arrays/strings from arbitrary shapes) --
+export function getHistoricalModern(
+  word: string,
+  signal?: AbortSignal,
+): Promise<HistoricalModernResponse> {
+  return fetchJson<HistoricalModernResponse>(
+    `${API_BASE_URL}/word/${encodeURIComponent(word)}/historical-modern`,
+    signal,
+  );
+}
+
+// ============================================================
+// GENERIC PARSERS
+// ============================================================
+
+function asRecord(
+  value: unknown,
+): Record<string, unknown> | null {
+  if (
+    value &&
+    typeof value === 'object' &&
+    !Array.isArray(value)
+  ) {
+    return value as Record<string, unknown>;
+  }
+
+  return null;
+}
 
 function asArray(value: unknown): unknown[] {
-  if (Array.isArray(value)) return value;
-  if (typeof value === 'string') return [value];
-  if (value && typeof value === 'object') {
-    const arr = Object.values(value).filter((v) => v !== null && v !== undefined);
-    return arr.length > 0 ? arr : [];
+  if (Array.isArray(value)) {
+    return value;
   }
+
+  if (
+    value === null ||
+    value === undefined
+  ) {
+    return [];
+  }
+
+  if (typeof value === 'string') {
+    return [value];
+  }
+
   return [];
 }
 
-function asString(value: unknown): string | null {
-  if (typeof value === 'string' && value.trim()) return value.trim();
-  if (typeof value === 'number') return String(value);
+function asString(
+  value: unknown,
+): string | null {
+  if (
+    typeof value === 'string' &&
+    value.trim()
+  ) {
+    return value.trim();
+  }
+
+  if (typeof value === 'number') {
+    return String(value);
+  }
+
   return null;
 }
+
+function asNumber(
+  value: unknown,
+): number | undefined {
+  if (
+    typeof value === 'number' &&
+    Number.isFinite(value)
+  ) {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return undefined;
+}
+
+// ============================================================
+// LEXICAL FAMILY
+// ============================================================
 
 export interface ParsedFamilyMember {
   text: string;
   sub?: string;
 }
 
-export function parseFamily(data: FamilyResponse): ParsedFamilyMember[] {
-  const familyRaw = data.family ?? data.forms ?? data.lexical_family ?? data.morphemes;
+/**
+ * Backend structure:
+ *
+ * lexical_family: {
+ *   forms: [
+ *     { text: "அன்பு" },
+ *     ...
+ *   ],
+ *   count: 15,
+ *   source: "lexical_family.get_lexical_family"
+ * }
+ *
+ * Only `forms` are lexical words.
+ *
+ * We deliberately do NOT convert the lexical_family
+ * object itself into an array because that would expose:
+ *
+ * 15
+ * lexical_family.get_lexical_family
+ *
+ * as fake lexical forms.
+ */
+export function parseFamily(
+  data: FamilyResponse,
+): ParsedFamilyMember[] {
+  const lexicalFamily = asRecord(
+    data.lexical_family,
+  );
+
+  let familyRaw: unknown;
+
+  // ----------------------------------------------------------
+  // Main /word/{word} response
+  // ----------------------------------------------------------
+
+  if (lexicalFamily) {
+    familyRaw =
+      lexicalFamily.forms ??
+      lexicalFamily.words ??
+      lexicalFamily.family;
+  }
+
+  // ----------------------------------------------------------
+  // /family endpoint variants
+  // ----------------------------------------------------------
+
+  if (familyRaw === undefined) {
+    const familyObject = asRecord(
+      data.family,
+    );
+
+    if (familyObject) {
+      familyRaw =
+        familyObject.forms ??
+        familyObject.words ??
+        familyObject.family;
+    } else {
+      familyRaw = data.family;
+    }
+  }
+
+  // ----------------------------------------------------------
+  // Simple forms response
+  // ----------------------------------------------------------
+
+  if (familyRaw === undefined) {
+    familyRaw = data.forms;
+  }
+
   const items = asArray(familyRaw);
+
   return items
-    .map((item): ParsedFamilyMember | null => {
-      const s = asString(item);
-      if (s) return { text: s };
-      if (item && typeof item === 'object') {
-        const word = asString((item as Record<string, unknown>).word) ??
-          asString((item as Record<string, unknown>).form) ??
-          asString((item as Record<string, unknown>).text) ??
-          asString((item as Record<string, unknown>).surface);
-        const gloss = asString((item as Record<string, unknown>).gloss) ??
-          asString((item as Record<string, unknown>).meaning) ??
-          asString((item as Record<string, unknown>).pos) ??
-          asString((item as Record<string, unknown>).category);
-        if (word) return { text: word, sub: gloss ?? undefined };
-      }
-      return null;
-    })
-    .filter((m): m is ParsedFamilyMember => m !== null);
+    .map(
+      (
+        item,
+      ): ParsedFamilyMember | null => {
+        const directText =
+          asString(item);
+
+        if (directText) {
+          return {
+            text: directText,
+          };
+        }
+
+        const record = asRecord(item);
+
+        if (!record) {
+          return null;
+        }
+
+        const text =
+          asString(record.text) ??
+          asString(record.word) ??
+          asString(record.form) ??
+          asString(record.surface);
+
+        if (!text) {
+          return null;
+        }
+
+        const sub =
+          asString(record.gloss) ??
+          asString(record.meaning) ??
+          asString(record.pos) ??
+          asString(record.category);
+
+        return {
+          text,
+          sub: sub ?? undefined,
+        };
+      },
+    )
+    .filter(
+      (
+        item,
+      ): item is ParsedFamilyMember =>
+        item !== null,
+    );
 }
+
+// ============================================================
+// SEMANTIC CONSTELLATION
+// ============================================================
 
 export interface ParsedConstellationNode {
   label: string;
@@ -132,46 +349,107 @@ export interface ParsedConstellation {
   nodes: ParsedConstellationNode[];
 }
 
-export function parseConstellation(word: string, data: ConstellationResponse): ParsedConstellation {
-  const center = asString(data.word) ?? word;
+/**
+ * Compatibility parser for older components.
+ *
+ * WordExplorer currently reads the richer top-level
+ * `clusters` structure directly.
+ */
+export function parseConstellation(
+  word: string,
+  data: ConstellationResponse,
+): ParsedConstellation {
+  const center =
+    asString(data.word) ??
+    word;
 
-  const clustersRaw = data.constellation ?? data.clusters ?? data.semantic_clusters ?? data.nodes ?? data.related;
-  const clusterItems = asArray(clustersRaw);
+  const clustersRaw =
+    data.clusters ??
+    data.constellation ??
+    data.nodes ??
+    data.semantic_clusters ??
+    data.related;
 
-  const nodes: ParsedConstellationNode[] = clusterItems
-    .map((item): ParsedConstellationNode | null => {
-      const s = asString(item);
-      if (s && s !== center) return { label: s };
+  const clusterItems =
+    asArray(clustersRaw);
 
-      if (item && typeof item === 'object') {
-        const label = asString((item as Record<string, unknown>).word) ??
-          asString((item as Record<string, unknown>).label) ??
-          asString((item as Record<string, unknown>).form) ??
-          asString((item as Record<string, unknown>).term) ??
-          asString((item as Record<string, unknown>).name);
+  const nodes: ParsedConstellationNode[] =
+    clusterItems
+      .map(
+        (
+          item,
+        ): ParsedConstellationNode | null => {
+          const stringValue =
+            asString(item);
 
-        if (label && label !== center) {
-          const weight = (item as Record<string, unknown>).weight ??
-            (item as Record<string, unknown>).score ??
-            (item as Record<string, unknown>).similarity ??
-            (item as Record<string, unknown>).frequency;
-          const sub = asString((item as Record<string, unknown>).gloss) ??
-            asString((item as Record<string, unknown>).meaning) ??
-            asString((item as Record<string, unknown>).cluster) ??
-            asString((item as Record<string, unknown>).type);
+          if (
+            stringValue &&
+            stringValue !== center
+          ) {
+            return {
+              label: stringValue,
+            };
+          }
+
+          const record =
+            asRecord(item);
+
+          if (!record) {
+            return null;
+          }
+
+          const label =
+            asString(record.word) ??
+            asString(record.label) ??
+            asString(record.form) ??
+            asString(record.term) ??
+            asString(record.name) ??
+            asString(record.cluster_id);
+
+          if (
+            !label ||
+            label === center
+          ) {
+            return null;
+          }
+
+          const weight =
+            asNumber(record.weight) ??
+            asNumber(record.score) ??
+            asNumber(record.similarity) ??
+            asNumber(record.frequency) ??
+            asNumber(record.share) ??
+            asNumber(record.size);
+
+          const sub =
+            asString(record.gloss) ??
+            asString(record.meaning) ??
+            asString(record.cluster_kind) ??
+            asString(record.type);
+
           return {
             label,
-            weight: typeof weight === 'number' ? weight : undefined,
+            weight,
             sub: sub ?? undefined,
           };
-        }
-      }
-      return null;
-    })
-    .filter((n): n is ParsedConstellationNode => n !== null);
+        },
+      )
+      .filter(
+        (
+          node,
+        ): node is ParsedConstellationNode =>
+          node !== null,
+      );
 
-  return { center, nodes };
+  return {
+    center,
+    nodes,
+  };
 }
+
+// ============================================================
+// WORD METADATA
+// ============================================================
 
 export interface WordMetadata {
   word: string;
@@ -181,16 +459,116 @@ export interface WordMetadata {
   raw: WordResponse;
 }
 
-export function parseWordMetadata(word: string, data: WordResponse): WordMetadata {
+export function parseWordMetadata(
+  word: string,
+  data: WordResponse,
+): WordMetadata {
   const definitions: string[] = [];
-  const defRaw = data.definition ?? data.definitions ?? data.meaning ?? data.meanings ?? data.gloss ?? data.glosses;
+
+  const defRaw =
+    data.definition ??
+    data.definitions ??
+    data.meaning ??
+    data.meanings ??
+    data.gloss ??
+    data.glosses;
+
   for (const item of asArray(defRaw)) {
-    const s = asString(item);
-    if (s) definitions.push(s);
+    const stringValue =
+      asString(item);
+
+    if (stringValue) {
+      definitions.push(
+        stringValue,
+      );
+    }
   }
 
-  const pos = asString(data.pos ?? data.part_of_speech ?? data.category);
-  const gloss = asString(data.gloss ?? data.short_gloss ?? data.summary);
+  const pos =
+    asString(
+      data.pos ??
+        data.part_of_speech ??
+        data.category,
+    );
 
-  return { word: asString(data.word) ?? word, definitions, pos, gloss, raw: data };
+  const gloss =
+    asString(
+      data.gloss ??
+        data.short_gloss ??
+        data.summary,
+    );
+
+  return {
+    word:
+      asString(data.word) ??
+      word,
+
+    definitions,
+
+    pos,
+
+    gloss,
+
+    raw: data,
+  };
+}
+
+// ============================================================
+// DISPLAY HELPERS
+// ============================================================
+
+/**
+ * Extracts useful human-readable text
+ * from backend objects.
+ *
+ * Examples:
+ *
+ * { text: "அன்பு" }
+ * { word: "அன்பு" }
+ * { label: "அன்பு" }
+ * { form: "அன்பு" }
+ */
+export function displayValue(
+  value: unknown,
+): string {
+  if (
+    typeof value === 'string'
+  ) {
+    return value.trim();
+  }
+
+  if (
+    typeof value === 'number'
+  ) {
+    return String(value);
+  }
+
+  const record =
+    asRecord(value);
+
+  if (!record) {
+    return '';
+  }
+
+  return (
+    asString(record.text) ??
+    asString(record.word) ??
+    asString(record.label) ??
+    asString(record.form) ??
+    asString(record.term) ??
+    asString(record.name) ??
+    ''
+  );
+}
+
+/**
+ * Safely converts backend values
+ * into displayable strings.
+ */
+export function cleanList(
+  value: unknown,
+): string[] {
+  return asArray(value)
+    .map(displayValue)
+    .filter(Boolean);
 }
